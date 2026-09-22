@@ -337,12 +337,7 @@ function LoginScreen() {
           <Button onClick={doLogin} disabled={loading} className="w-full">
             {loading ? "..." : tr("signIn", lang)}
           </Button>
-          <div className="text-[11px] text-slate-500 text-center pt-2">
-            Demo credentials: <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">admin@school.tt / admin123</code>
-            <br />
-            Also: <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">scheduler@najah.tt / demo123</code> ·
-            <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded ms-1">viewer@najah.tt / demo123</code>
-          </div>
+          
         </div>
       </div>
     </div>

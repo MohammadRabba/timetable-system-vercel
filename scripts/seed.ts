@@ -10,11 +10,24 @@
 //     enumerates ALL compatible rooms (avoiding single-room overload).
 //
 // Run with: bun run /home/z/my-project/scripts/seed.ts
-
+import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 import { hashPassword } from "../src/lib/auth";
 
-const db = new PrismaClient();
+const connectionString = process.env.DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error("DATABASE_URL is not configured");
+}
+
+const adapter = new PrismaPg({
+  connectionString,
+});
+
+const db = new PrismaClient({
+  adapter,
+});
+
 
 const ARABIC_NAMES = {
   teachers: [
