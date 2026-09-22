@@ -1,0 +1,20 @@
+# Python dependencies for the OR-Tools scheduler microservice.
+# Used both by:
+#   - Local development (mini-services/scheduler/start.sh runs uvicorn)
+#   - Vercel production deployment (api/scheduler/[...path].py)
+#
+# Pinned versions ensure deterministic builds.
+
+# OR-Tools CP-SAT constraint optimizer
+ortools==9.15.6755
+
+# FastAPI + ASGI server (only used for local uvicorn dev)
+# In production on Vercel, the api/scheduler/[...path].py uses Mangum
+# to wrap the FastAPI app — no uvicorn needed.
+fastapi==0.128.0
+uvicorn==0.44.0
+pydantic==2.12.5
+
+# AWS-Lambda-to-ASGI adapter — required for Vercel Python Function
+# (Vercel runs Python functions on AWS Lambda under the hood)
+mangum>=0.17.0

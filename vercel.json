@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "bun run vercel-build",
+  "installCommand": "bun install",
+  "framework": "nextjs",
+  "functions": {
+    "api/scheduler/[...path].py": {
+      "maxDuration": 90,
+      "memory": 1024,
+      "includeFiles": "mini-services/scheduler/**"
+    }
+  },
+  "regions": ["iad1"],
+  "github": {
+    "silent": true
+  }
+}

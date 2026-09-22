@@ -1,0 +1,21 @@
+# Top-level requirements.txt for Vercel Python Functions.
+# Vercel looks for requirements.txt at the project root to install Python
+# dependencies for any Python Functions under api/.
+#
+# This file simply re-exports the scheduler's requirements so there's one
+# source of truth.
+# Run locally: pip3 install -r mini-services/scheduler/requirements.txt
+
+# OR-Tools CP-SAT constraint optimizer
+ortools==9.15.6755
+
+# FastAPI + Pydantic (request/response validation for the FastAPI app
+# that's wrapped by Mangum in api/scheduler/[...path].py)
+fastapi==0.128.0
+pydantic==2.12.5
+
+# AWS-Lambda-to-ASGI adapter — required for Vercel Python Function
+mangum>=0.17.0
+
+# NOTE: uvicorn is NOT needed in production — Mangum provides the ASGI
+# transport. uvicorn is only for local dev (mini-services/scheduler/start.sh).

@@ -1,0 +1,489 @@
+// School Timetable Management & Automatic Scheduling System
+// Production-grade relational schema with multi-tenant isolation, RBAC,
+// full scheduling metadata, version control and audit logs.
+//
+// Production: PostgreSQL (Neon / Supabase / Prisma Postgres)
+// Development: SQLite (file:./db/custom.db) — see .env.example
+
+generator client {
+  provider = "prisma-client-js"
+  // Optimize for Vercel serverless — direct connection (no Data Proxy)
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  // Optional: Neon/Supabase provide both pooled and direct URLs.
+  // If you set DIRECT_DATABASE_URL, migrations use it (direct connection).
+  // Otherwise migrations fall back to DATABASE_URL (pooled). For production,
+  // set both env vars.
+}
+
+// =====================  TENANCY & AUTH  =====================
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  schools   School[]
+  users     User[]
+}
+
+model User {
+  id             String       @id @default(cuid())
+  email          String       @unique
+  name           String
+  passwordHash   String
+  role           UserRole     @default(VIEWER)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  schoolId       String?
+  school         School?      @relation(fields: [schoolId], references: [id], onDelete: SetNull)
+  teacherId      String?      @unique
+  teacher        Teacher?     @relation(fields: [teacherId], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  auditLogs      AuditLog[]
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  SCHOOL_ADMIN
+  SCHEDULER
+  TEACHER
+  VIEWER
+}
+
+model School {
+  id              String   @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name            String
+  principalName   String?
+  logoUrl         String?
+  address         String?
+  phone           String?
+  email           String?
+  currentYearId   String?
+  currentSemester String?
+  workingDays     String   // comma separated: "SUN,MON,TUE,WED,THU"
+  periodsPerDay   Int      @default(7)
+  periodDuration  Int      @default(45) // minutes
+  breakDuration   Int      @default(15)
+  startTime       String   @default("07:30")
+  endTime         String   @default("14:00")
+  rtl             Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  academicYears   AcademicYear[]
+  grades          Grade[]
+  branches        Branch[]
+  sections        Section[]
+  students        Student[]
+  subjects        Subject[]
+  teachers        Teacher[]
+  rooms           Room[]
+  lessons         Lesson[]
+  duties          Duty[]
+  constraints     Constraint[]
+  periods         Period[]
+  timetableVersions TimetableVersion[]
+  schedulingRuns  SchedulingRun[]
+  auditLogs       AuditLog[]
+  users           User[]
+  currentYear     AcademicYear? @relation("CurrentYearOfSchool", fields: [currentYearId], references: [id], onDelete: SetNull)
+}
+
+model AcademicYear {
+  id        String   @id @default(cuid())
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name      String   // e.g. "2026/2027"
+  startDate DateTime
+  endDate   DateTime
+  semesters String   // "First,Second"
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  periods   Period[]
+  sections  Section[] @relation("SectionsByYear")
+  lessons   Lesson[]
+  isCurrentFor School[] @relation("CurrentYearOfSchool")
+}
+
+model Period {
+  id         String   @id @default(cuid())
+  schoolId   String
+  school     School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  yearId     String
+  year       AcademicYear @relation(fields: [yearId], references: [id], onDelete: Cascade)
+  order      Int      // 1..N
+  label      String   // "Period 1", "Rest", ...
+  startTime  String
+  endTime    String
+  type       String   @default("TEACHING") // TEACHING | BREAK | REST | SEVENTH
+  isBreak    Boolean  @default(false)
+}
+
+// =====================  ACADEMIC STRUCTURE  =====================
+
+model Grade {
+  id        String   @id @default(cuid())
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  stage     String   // "Primary" | "Secondary" | "High"
+  name      String   // "Grade 10"
+  order     Int      @default(0)
+  branches  Branch[]
+  sections  Section[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Branch {
+  id        String   @id @default(cuid())
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  gradeId   String
+  grade     Grade    @relation(fields: [gradeId], references: [id], onDelete: Cascade)
+  name      String
+  sections  Section[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([schoolId, name])
+}
+
+model Section {
+  id           String   @id @default(cuid())
+  schoolId     String
+  school       School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  yearId       String?
+  year         AcademicYear? @relation("SectionsByYear", fields: [yearId], references: [id], onDelete: SetNull)
+  gradeId      String
+  grade        Grade    @relation(fields: [gradeId], references: [id], onDelete: Cascade)
+  branchId     String?
+  branch       Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  name         String   // "10-A"
+  code         String   // "10A"
+  studentCount Int      @default(0)
+  roomId       String?
+  room         Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  lessons      Lesson[]
+  timetableEntries TimetableEntry[]
+  students     Student[]
+  teacherSections TeacherSection[]
+}
+
+model Student {
+  id        String   @id @default(cuid())
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  sectionId String
+  section   Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  name      String
+  studentNo String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// =====================  SUBJECTS  =====================
+
+model Subject {
+  id                 String   @id @default(cuid())
+  schoolId           String
+  school             School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name               String
+  code               String
+  type               String   @default("THEORY") // THEORY | PRACTICAL | LABORATORY | SPORT | ACTIVITY | OTHER
+  defaultWeekly      Int      @default(0)
+  maxPerDay          Int      @default(2)
+  minGap             Int      @default(0)
+  consecutive        Boolean  @default(false)
+  requiredConsecutive Int      @default(0)
+  preferredPeriods   String   // "1,2,3"
+  forbiddenPeriods   String   // ""
+  requiredRoomType   String?
+  requiredEquipment   String?
+  priority           Int      @default(100)
+  color              String?  // for visual styling
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  lessons            Lesson[]
+  teacherSubjects    TeacherSubject[]
+  timetableEntries   TimetableEntry[]
+}
+
+// =====================  TEACHERS  =====================
+
+model Teacher {
+  id                   String   @id @default(cuid())
+  schoolId             String
+  school               School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name                 String
+  employeeNumber       String
+  specialization       String?
+  email                String?
+  phone                String?
+  status               String   @default("ACTIVE")
+  requiredWorkload     Int      @default(24) // required weekly periods
+  maxDailyPeriods     Int      @default(7)
+  minDailyPeriods     Int      @default(0)
+  requiredSeventh      Int      @default(0) // target seventh-period assignments
+  maxSeventh           Int      @default(3)
+  user                 User?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  subjects             TeacherSubject[]
+  sections             TeacherSection[]
+  availability         TeacherAvailability[]
+  daysOff              TeacherDayOff[]
+  preferences          TeacherPreference[]
+  lessons              Lesson[]
+  duties               Duty[]
+  timetableEntries     TimetableEntry[]
+}
+
+model TeacherSubject {
+  id         String   @id @default(cuid())
+  teacherId  String
+  teacher    Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  subjectId  String
+  subject    Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  priority   Int      @default(0)
+  @@unique([teacherId, subjectId])
+}
+
+model TeacherSection {
+  id         String   @id @default(cuid())
+  teacherId  String
+  teacher    Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  sectionId  String
+  section    Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  @@unique([teacherId, sectionId])
+}
+
+enum AvailabilityState {
+  AVAILABLE
+  UNAVAILABLE
+  PREFERRED
+  FORBIDDEN
+}
+
+model TeacherAvailability {
+  id         String             @id @default(cuid())
+  teacherId  String
+  teacher    Teacher            @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  day        String             // SUN, MON, TUE, WED, THU, SAT
+  period     Int                // 1..N
+  state      AvailabilityState  @default(AVAILABLE)
+  @@unique([teacherId, day, period])
+}
+
+model TeacherDayOff {
+  id         String   @id @default(cuid())
+  teacherId  String
+  teacher    Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  day        String
+  @@unique([teacherId, day])
+}
+
+model TeacherPreference {
+  id         String   @id @default(cuid())
+  teacherId  String
+  teacher    Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  day        String
+  period     Int
+  type       String   @default("PREFERRED")
+  weight     Int      @default(100)
+}
+
+// =====================  ROOMS  =====================
+
+model Room {
+  id                String   @id @default(cuid())
+  schoolId          String
+  school            School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name              String
+  code              String
+  type              String   @default("CLASSROOM") // CLASSROOM | LABORATORY | COMPUTER_LAB | SPORTS_HALL | AUDITORIUM | ACTIVITY_ROOM | SPECIAL
+  capacity          Int      @default(30)
+  equipment         String?
+  availablePeriods  String?
+  unavailablePeriods String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  sections          Section[]
+  lessons           Lesson[]
+  timetableEntries  TimetableEntry[]
+}
+
+// =====================  LESSONS  =====================
+
+model Lesson {
+  id                 String   @id @default(cuid())
+  schoolId           String
+  school             School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  yearId             String?
+  year               AcademicYear? @relation(fields: [yearId], references: [id], onDelete: SetNull)
+  teacherId          String
+  teacher            Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  subjectId          String
+  subject            Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  sectionId          String
+  section            Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  roomId             String?
+  room               Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  weeklyOccurrences  Int      @default(1)
+  duration           Int      @default(1)
+  lessonType         String   @default("THEORY")
+  priority           Int      @default(100)
+  requiredConsecutive Int     @default(0)
+  preferredSlots     String?
+  forbiddenSlots     String?
+  fixed              Boolean  @default(false)
+  fixedDay           String?
+  fixedPeriod        Int?
+  locked             Boolean  @default(false)
+  coTeacherId        String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  timetableEntries    TimetableEntry[]
+}
+
+// =====================  DUTIES  =====================
+
+model Duty {
+  id           String   @id @default(cuid())
+  schoolId     String
+  school       School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  teacherId    String
+  teacher      Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  type         String   @default("DUTY") // SUPERVISION | DUTY | ADMIN | RESERVE | ACTIVITY | MEETING | OTHER
+  title        String
+  day          String
+  period       Int
+  location     String?
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  timetableEntries TimetableEntry[]
+}
+
+// =====================  CONSTRAINTS  =====================
+
+model Constraint {
+  id         String   @id @default(cuid())
+  schoolId   String
+  school     School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  code       String
+  name       String
+  type       String   @default("HARD") // HARD | SOFT
+  weight     Int      @default(1000000)
+  enabled    Boolean  @default(true)
+  params     String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// =====================  TIMETABLE VERSIONING  =====================
+
+model TimetableVersion {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  version       Int
+  name          String
+  reason        String?
+  createdBy     String
+  statistics    String?  // JSON
+  snapshot      String?  // JSON
+  isCurrent     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  entries       TimetableEntry[]
+  changeHistory TimetableChange[]
+  schedulingRuns SchedulingRun[]
+}
+
+model TimetableEntry {
+  id            String   @id @default(cuid())
+  schoolId      String
+  versionId     String
+  version       TimetableVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  lessonId      String?
+  lesson        Lesson?  @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  dutyId        String?
+  duty          Duty?    @relation(fields: [dutyId], references: [id], onDelete: Cascade)
+  teacherId     String?
+  teacher       Teacher? @relation(fields: [teacherId], references: [id], onDelete: SetNull)
+  sectionId     String?
+  section       Section? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  subjectId     String?
+  subject       Subject? @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  roomId        String?
+  room          Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  day           String
+  period        Int
+  cellType      String   @default("TEACHING") // TEACHING | DUTY | SUPERVISION | RESERVE | UNAVAILABLE | REST | FREE
+  locked        Boolean  @default(false)
+  @@unique([versionId, day, period, teacherId])
+}
+
+model TimetableChange {
+  id           String   @id @default(cuid())
+  versionId    String
+  version      TimetableVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  action       String   // MOVE | SWAP | LOCK | UNLOCK | ADD | DELETE | UNDO | REDO
+  payload      String   // JSON
+  undone       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+}
+
+// =====================  SCHEDULING JOBS  =====================
+
+model SchedulingRun {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  status        String   @default("QUEUED") // QUEUED | VALIDATING | SOLVING | OPTIMIZING | COMPLETED | FAILED | CANCELLED
+  progress      Int      @default(0)
+  solverStatus  String?
+  mode          String   @default("BALANCED") // FAST | BALANCED | DEEP
+  timeLimitSec  Int      @default(60)
+  result        String?  // JSON
+  error         String?
+  startedAt     DateTime @default(now())
+  finishedAt    DateTime?
+  versionId     String?
+  version       TimetableVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+}
+
+// =====================  AUDIT  =====================
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  schoolId   String?
+  school     School?  @relation(fields: [schoolId], references: [id], onDelete: SetNull)
+  action     String
+  entity     String
+  entityId   String?
+  oldValue   String?
+  newValue   String?
+  ip         String?
+  createdAt  DateTime @default(now())
+}
